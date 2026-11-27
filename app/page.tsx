@@ -633,6 +633,17 @@ export default function Home() {
   }
   function zoomBy(factor: number) { setSmoothZoom(targetZoom.current * factor); }
   function focusRegion(ra: number, dec: number, zoom: number) { coordinateFocus.current = { ra, dec }; targetPan.current = panForCoordinates(ra, dec, zoom); setSmoothZoom(zoom, { ra, dec }); }
+  function focusNearbySearchResult(ra: number, dec: number) {
+    const stage = stageRef.current, zoom = targetZoom.current;
+    if (!stage || zoom < 8) { focusRegion(ra, dec, 28); return; }
+    const rect = stage.getBoundingClientRect(), position = skyPosition(ra, dec), scale = Math.min(rect.width, rect.height) * .0205 * zoom;
+    const x = rect.width / 2 + targetPan.current.x - position.x * scale, y = rect.height / 2 + targetPan.current.y - position.y * scale;
+    const nearX = rect.width * .42, nearY = rect.height * .42;
+    if (x < -nearX || x > rect.width + nearX || y < -nearY || y > rect.height + nearY) { focusRegion(ra, dec, 28); return; }
+    const marginX = Math.min(90, rect.width * .18), marginY = Math.min(80, rect.height * .18), safeX = Math.max(marginX, Math.min(rect.width - marginX, x)), safeY = Math.max(marginY, Math.min(rect.height - marginY, y));
+    const pan = { x: targetPan.current.x + safeX - x, y: targetPan.current.y + safeY - y };
+    coordinateFocus.current = { ra, dec }; setSmoothZoom(zoom, { ra, dec }, pan);
+  }
   function frameCloud(cloud: keyof typeof CLOUD_VIEWS) { const view = CLOUD_VIEWS[cloud]; selectedRegion.current = null; setNotice(`Focused on the ${cloud}`); focusRegion(view.ra, view.dec, view.zoom); }
   function frameAll() { const systemCenter = { ra: ALL_VIEW.ra, dec: ALL_VIEW.dec }, basePan = panForCoordinates(systemCenter.ra, systemCenter.dec, ALL_VIEW.zoom), pan = { x: basePan.x, y: basePan.y + ALL_VIEW.offsetY }; selectedRegion.current = null; setNotice(''); setSmoothZoom(ALL_VIEW.zoom, systemCenter, pan); coordinateFocus.current = null; }
   function updateSelection(index: number | null) { if (index != null) selectedRegion.current = null; selectedRef.current = index; setSelected(index); }
@@ -643,7 +654,7 @@ export default function Home() {
   function focusStar(index: number) {
     const match = catalog?.stars[index]; if (!match) return;
     const pop = population(match), color = match[4] ?? 0, g = match[3] ?? 18.5;
-    setEnabled(v => ({ ...v, [pop]: true })); setMagMin(Math.min(magMin, g)); setMagMax(Math.max(magMax, g)); setColorMin(Math.min(colorMin, color)); setColorMax(Math.max(colorMax, color)); setSpectralFilter('ALL'); setObjectTypeFilter('ALL'); updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setShowSuggestions(false); focusRegion(match[1], match[2], 28);
+    setEnabled(v => ({ ...v, [pop]: true })); setMagMin(Math.min(magMin, g)); setMagMax(Math.max(magMax, g)); setColorMin(Math.min(colorMin, color)); setColorMax(Math.max(colorMax, color)); setSpectralFilter('ALL'); setObjectTypeFilter('ALL'); updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setShowSuggestions(false); focusNearbySearchResult(match[1], match[2]);
   }
   function selectTableStar(index: number) { const match = catalog?.stars[index]; if (!match) return; updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setTableOpen(false); requestAnimationFrame(() => focusRegion(match[1], match[2], 28)); }
   function focusCluster(suggestion: Extract<SearchSuggestion, { kind: 'cluster' }>) {
