@@ -299,6 +299,7 @@ export default function Home() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [showProperMotion, setShowProperMotion] = useState(false);
   const [showClusters, setShowClusters] = useState(false);
+  const [showObjectLabels, setShowObjectLabels] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualTool, setManualTool] = useState<ManualTool>('stars');
   const [manualSelection, setManualSelection] = useState<number[]>([]);
@@ -323,6 +324,7 @@ export default function Home() {
   const counts = useMemo(() => { const result = { L: 0, S: 0, B: 0 }; catalog?.stars.forEach(star => { const pop = population(star), g = star[3] ?? 18.5, color = star[4] ?? 0; if (enabled[pop] && g >= magMin && g <= magMax && color >= colorMin && color <= colorMax && matchesSpectral(star, spectralFilter) && matchesObjectType(star, objectTypeFilter)) result[pop]++; }); return result; }, [catalog, colorMax, colorMin, enabled, magMax, magMin, objectTypeFilter, spectralFilter]);
   const visibleCount = counts.L + counts.S + counts.B;
   const filteredIndices = useMemo(() => catalog?.stars.flatMap((star, index) => { const pop = population(star), g = star[3] ?? 18.5, color = star[4] ?? 0; return enabled[pop] && g >= magMin && g <= magMax && color >= colorMin && color <= colorMax && matchesSpectral(star, spectralFilter) && matchesObjectType(star, objectTypeFilter) ? [index] : []; }) ?? [], [catalog, colorMax, colorMin, enabled, magMax, magMin, objectTypeFilter, spectralFilter]);
+  const labelPriorityIndices = useMemo(() => showObjectLabels && catalog ? [...filteredIndices].sort((a, b) => (catalog.stars[a][3] ?? 99) - (catalog.stars[b][3] ?? 99) || a - b) : [], [catalog, filteredIndices, showObjectLabels]);
   const tableIndices = useMemo(() => { if (!manualSelection.length) return filteredIndices; const selectedIndices = new Set(manualSelection); return filteredIndices.filter(index => selectedIndices.has(index)); }, [filteredIndices, manualSelection]);
   const objectTypeOptions = useMemo(() => {
     const typeCounts = new Map<string, number>();
@@ -410,6 +412,25 @@ export default function Home() {
         }
         ctx.restore();
       }
+      if (showObjectLabels) {
+        const placed: Array<{ left: number; top: number; right: number; bottom: number }> = [], maximum = width <= 700 ? 28 : 70;
+        let labelCount = 0;
+        const drawLabel = (index: number, selectedLabel = false) => {
+          if (labelCount >= maximum) return;
+          const x = screen[index * 3], y = screen[index * 3 + 1], radius = screen[index * 3 + 2]; if (radius <= 0 || x < 0 || y < 0 || x > width || y > height) return;
+          const star = data.stars[index], simbadName = star[12].trim(), name = simbadName && simbadName !== '-99' ? simbadName : star[0], values = `G ${safe(star[3])} · BP−RP ${safe(star[4])}`;
+          ctx.font = '600 9px Arial'; const nameWidth = ctx.measureText(name).width; ctx.font = '8px Arial'; const valuesWidth = ctx.measureText(values).width;
+          const labelWidth = Math.max(nameWidth, valuesWidth) + 14, labelHeight = 31, offset = Math.max(7, radius + 5); let left = x + offset, top = y - labelHeight / 2;
+          if (left + labelWidth > width - 4) left = x - offset - labelWidth; top = Math.max(4, Math.min(height - labelHeight - 4, top));
+          const box = { left: left - 3, top: top - 3, right: left + labelWidth + 3, bottom: top + labelHeight + 3 };
+          if (!selectedLabel && placed.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) return;
+          placed.push(box); labelCount++;
+          ctx.save(); ctx.globalAlpha = .88; ctx.fillStyle = selectedLabel ? 'rgba(18,58,69,.94)' : 'rgba(4,12,18,.88)'; ctx.fillRect(left, top, labelWidth, labelHeight); ctx.globalAlpha = 1; ctx.strokeStyle = selectedLabel ? '#78eaf5' : 'rgba(120,215,229,.32)'; ctx.lineWidth = selectedLabel ? 1.2 : .8; ctx.strokeRect(left + .5, top + .5, labelWidth - 1, labelHeight - 1); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(left < x ? left + labelWidth : left, y); ctx.stroke();
+          ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = selectedLabel ? '#d8fbff' : '#b9d9e0'; ctx.font = '600 9px Arial'; ctx.fillText(name, left + 7, top + 5); ctx.fillStyle = '#6f99a5'; ctx.font = '8px Arial'; ctx.fillText(values, left + 7, top + 17); ctx.restore();
+        };
+        const selectedIndex = selectedRef.current; if (selectedIndex != null) drawLabel(selectedIndex, true);
+        for (const index of labelPriorityIndices) { if (index !== selectedIndex) drawLabel(index); if (labelCount >= maximum) break; }
+      }
       const region = selectedRegion.current;
       if (region) {
         const position = skyPosition(region.ra, region.dec), x = width / 2 + panX - position.x * scale, y = height / 2 + panY - position.y * scale, regionRadius = region.radius * DEG * 54 * scale * CLUSTER_MARKER_PADDING;
@@ -438,7 +459,7 @@ export default function Home() {
       }
       ctx.globalAlpha = 1;
     });
-  }, [filteredIndices, manualMode, showClusters, showProperMotion]);
+  }, [filteredIndices, labelPriorityIndices, manualMode, showClusters, showObjectLabels, showProperMotion]);
 
   useEffect(() => { draw(); }, [catalog, draw]);
   useEffect(() => {
@@ -644,6 +665,7 @@ export default function Home() {
         <div className="control-group map-layers"><p>Map layers</p>
           <label><input type="checkbox" checked={showProperMotion} onChange={event => setShowProperMotion(event.target.checked)} /><span><b>Proper motion</b><small>Gaia corrected vectors</small></span></label>
           <label><input type="checkbox" checked={showClusters} onChange={event => setShowClusters(event.target.checked)} /><span><b>Clusters</b><small>Click a marker to zoom into its reference region</small></span></label>
+          <label><input type="checkbox" checked={showObjectLabels} onChange={event => setShowObjectLabels(event.target.checked)} /><span><b>Object labels</b><small>Name, G magnitude and BP−RP colour</small></span></label>
         </div>
         <div className="control-group classification-filters"><p>Spectral type</p><select className="spectral-select" value={spectralFilter} onChange={e => setSpectralFilter(e.target.value as SpectralFilter)} aria-label="Filter by spectral type"><option value="ALL">All types</option><optgroup label="Individual types"><option value="WR">WR</option><option value="O">O</option><option value="B">B</option><option value="A">A</option><option value="F">F</option><option value="G">G</option><option value="K">K</option><option value="M">M</option></optgroup><optgroup label="Ranges"><option value="HOT">Hot stars · WR + OBA</option><option value="COOL">Cool stars · FGKM</option></optgroup></select><p className="classification-subheading">Object type · SIMBAD</p><select className="spectral-select" value={objectTypeFilter} onChange={e => setObjectTypeFilter(e.target.value)} aria-label="Filter by SIMBAD object type"><option value="ALL">All Object Types</option>{objectTypeOptions.map(([type]) => <option key={type} value={type}>{objectTypeLabel(type)}</option>)}</select></div>
         <div className="control-group"><p>G magnitude range</p><div className="color-values"><b>{magMin.toFixed(1)}</b><span>minimum — maximum</span><b>{magMax.toFixed(1)}</b></div><div className="dual-range"><div className="dual-mag-track" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMin} onChange={e => setMagMin(Math.min(Number(e.target.value), magMax - 0.1))} aria-label="Minimum G magnitude" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMax} onChange={e => setMagMax(Math.max(Number(e.target.value), magMin + 0.1))} aria-label="Maximum G magnitude" /></div><div className="range-labels"><span>brighter</span><span>fainter</span></div></div>
