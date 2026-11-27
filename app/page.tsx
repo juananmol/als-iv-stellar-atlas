@@ -18,7 +18,6 @@ type IdentifierIndexEntry = { index: number; identifiers: { label: string; norma
 type QueryScope = 'selected' | 'object' | 'objects' | 'cluster' | 'cone' | 'manual' | 'view' | 'filtered' | 'L' | 'S' | 'B' | 'all';
 type ManualTool = 'stars' | 'rectangle' | 'circle' | 'polygon';
 type ScreenPoint = { x: number; y: number };
-type ObjectSymbol = 'binary' | 'emission' | 'evolved' | 'young' | 'variable';
 
 const DEG = Math.PI / 180;
 const RA0 = 66 * DEG;
@@ -87,11 +86,6 @@ const CLUSTERS: Record<string, { name: string; ra: number; dec: number; zoom: nu
   ngc602: { name: 'NGC 602', ra: 22.377847, dec: -73.555518, zoom: 24, radius: .01833 },
 };
 const MAP_CLUSTERS = [...new Map(Object.values(CLUSTERS).map(cluster => [`${cluster.name}|${cluster.ra}|${cluster.dec}`, cluster])).values()];
-const VARIABLE_OBJECT_TYPES = new Set(['Pu', 'LP', 'V', 'El', 'cC', 'Mi', 'RR', 'Ce', 'RV', 'Or', 'CV', 'bC', 'RC', 'Ro', 'EB']);
-const BINARY_OBJECT_TYPES = new Set(['**', 'EB', 'SB', 'El', 'HXB', 'XB']);
-const EMISSION_OBJECT_TYPES = new Set(['Em', 'Be', 'WR', 'EmO', 'Ae']);
-const EVOLVED_OBJECT_TYPES = new Set(['sr', 'sb', 'sy', 'sg', 'cC', 'Ce', 'AB', 'pA', 'C', 'Mi', 'RC']);
-const YOUNG_OBJECT_TYPES = new Set(['YO', 'Y', 'Or']);
 
 function population(star: RawStar): Population { return (star[10][0] || 'L') as Population; }
 function skyPosition(raDegrees: number, decDegrees: number) {
@@ -152,16 +146,6 @@ function objectTypeLabel(type: string) {
   const label = OBJECT_TYPE_NAMES[clean] ?? OBJECT_TYPE_NAMES[objectTypeSignature(clean)];
   return label ?? clean.replace(/\?$/, '');
 }
-function objectSymbol(star: RawStar): ObjectSymbol | null {
-  const type = objectTypeGroup(star[13].trim());
-  if (BINARY_OBJECT_TYPES.has(type)) return 'binary';
-  if (EMISSION_OBJECT_TYPES.has(type)) return 'emission';
-  if (EVOLVED_OBJECT_TYPES.has(type)) return 'evolved';
-  if (YOUNG_OBJECT_TYPES.has(type)) return 'young';
-  if (VARIABLE_OBJECT_TYPES.has(type)) return 'variable';
-  return null;
-}
-function isKnownVariable(star: RawStar) { return VARIABLE_OBJECT_TYPES.has(objectTypeGroup(star[13].trim())); }
 function safe(value: number | null, digits = 3) { return value == null ? '—' : value.toFixed(digits); }
 function formatCount(value: number) { return value.toLocaleString('en-US').replaceAll(',', ' '); }
 function csvCell(value: unknown) { const text = value == null ? '' : String(value); return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
@@ -314,9 +298,6 @@ export default function Home() {
   const [tableOpen, setTableOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [showProperMotion, setShowProperMotion] = useState(false);
-  const [showVariables, setShowVariables] = useState(false);
-  const [showObjectSymbols, setShowObjectSymbols] = useState(false);
-  const [showDensity, setShowDensity] = useState(false);
   const [showClusters, setShowClusters] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualTool, setManualTool] = useState<ManualTool>('stars');
@@ -398,71 +379,10 @@ export default function Home() {
         const sx = width / 2 + panX - x * scale, sy2 = height / 2 + panY - y * scale; const radius = renderMetrics[i * 2] * zoomMarkerScale;
         screen[i * 3] = sx; screen[i * 3 + 1] = sy2; screen[i * 3 + 2] = radius;
       }
-      if (showDensity) {
-        const pixelScale = width <= 700 ? 7 : 5, gridWidth = Math.max(1, Math.ceil(width / pixelScale)), gridHeight = Math.max(1, Math.ceil(height / pixelScale)), density = new Float32Array(gridWidth * gridHeight);
-        let peak = 0;
-        for (const i of filteredIndices) {
-          const sx = screen[i * 3], sy = screen[i * 3 + 1]; if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const gx = Math.floor(sx / pixelScale), gy = Math.floor(sy / pixelScale);
-          for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-            const x = gx + ox, y = gy + oy; if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) continue;
-            const index = y * gridWidth + x, weight = ox === 0 && oy === 0 ? 1 : ox === 0 || oy === 0 ? .55 : .28;
-            density[index] += weight; if (density[index] > peak) peak = density[index];
-          }
-        }
-        if (peak > 0) {
-          const heatCanvas = document.createElement('canvas'); heatCanvas.width = gridWidth; heatCanvas.height = gridHeight; const heatContext = heatCanvas.getContext('2d');
-          if (heatContext) {
-            const image = heatContext.createImageData(gridWidth, gridHeight), normalizer = Math.log1p(peak);
-            for (let i = 0; i < density.length; i++) {
-              const value = Math.log1p(density[i]) / normalizer; if (value < .045) continue;
-              const offset = i * 4, hot = Math.max(0, (value - .48) / .52);
-              image.data[offset] = Math.round(33 + 222 * hot); image.data[offset + 1] = Math.round(105 + 115 * value); image.data[offset + 2] = Math.round(158 - 90 * hot); image.data[offset + 3] = Math.round(25 + 155 * Math.pow(value, .72));
-            }
-            heatContext.putImageData(image, 0, 0); ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.imageSmoothingEnabled = true; ctx.filter = `blur(${pixelScale * .7}px)`; ctx.drawImage(heatCanvas, 0, 0, width, height); ctx.restore();
-          }
-        }
-      }
-      if (showClusters) {
-        ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(121,217,231,.48)'; ctx.fillStyle = '#94dfe9'; ctx.font = '600 8px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        for (const cluster of MAP_CLUSTERS) {
-          const position = skyPosition(cluster.ra, cluster.dec), x = width / 2 + panX - position.x * scale, y = height / 2 + panY - position.y * scale, radius = Math.max(3.5, cluster.radius * DEG * 54 * scale * CLUSTER_MARKER_PADDING);
-          if (x + radius < 0 || x - radius > width || y + radius < 0 || y - radius > height) continue;
-          ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke(); if (zoom >= 4 || radius >= 7) ctx.fillText(cluster.name, x, y - radius - 3);
-        }
-        ctx.setLineDash([]);
-        for (const i of filteredIndices) {
-          const star = data.stars[i]; if (objectTypeGroup(star[13].trim()) !== 'As') continue;
-          const x = screen[i * 3], y = screen[i * 3 + 1]; if (x < 0 || y < 0 || x > width || y > height) continue;
-          ctx.strokeStyle = '#f1bd70'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4); ctx.stroke(); if (zoom >= 5) { ctx.fillStyle = '#e6c38e'; ctx.textAlign = 'left'; ctx.fillText(star[12] || star[0], x + 6, y - 4); }
-        }
-        ctx.restore();
-      }
       for (const i of filteredIndices) {
         const sx = screen[i * 3], sy2 = screen[i * 3 + 1], radius = screen[i * 3 + 2]; if (sx < -8 || sy2 < -8 || sx > width + 8 || sy2 > height + 8) continue;
         ctx.globalAlpha = renderMetrics[i * 2 + 1]; ctx.fillStyle = renderColors[i];
         if (radius < 1.8) ctx.fillRect(sx, sy2, Math.max(1, radius), Math.max(1, radius)); else { ctx.beginPath(); ctx.arc(sx, sy2, radius, 0, Math.PI * 2); ctx.fill(); if (radius > 2.8) { ctx.globalAlpha = .09; ctx.beginPath(); ctx.arc(sx, sy2, radius * 2.7, 0, Math.PI * 2); ctx.fill(); } }
-      }
-      if (showVariables) {
-        const rings = new Path2D();
-        for (const i of filteredIndices) {
-          const star = data.stars[i], x = screen[i * 3], y = screen[i * 3 + 1]; if (!isKnownVariable(star) || x < 0 || y < 0 || x > width || y > height) continue;
-          rings.moveTo(x + Math.max(5, screen[i * 3 + 2] + 3), y); rings.arc(x, y, Math.max(5, screen[i * 3 + 2] + 3), 0, Math.PI * 2);
-        }
-        ctx.save(); ctx.globalAlpha = .9; ctx.strokeStyle = '#ff91df'; ctx.lineWidth = 1.15; ctx.shadowColor = 'rgba(255,105,218,.7)'; ctx.shadowBlur = 4; ctx.stroke(rings); ctx.restore();
-      }
-      if (showObjectSymbols) {
-        const paths: Record<ObjectSymbol, Path2D> = { binary: new Path2D(), emission: new Path2D(), evolved: new Path2D(), young: new Path2D(), variable: new Path2D() };
-        for (const i of filteredIndices) {
-          const kind = objectSymbol(data.stars[i]), x = screen[i * 3], y = screen[i * 3 + 1]; if (!kind || x < 0 || y < 0 || x > width || y > height) continue;
-          const path = paths[kind], r = Math.max(4, screen[i * 3 + 2] + 2);
-          if (kind === 'binary') path.rect(x - r, y - r, r * 2, r * 2);
-          else if (kind === 'emission') { path.moveTo(x, y - r); path.lineTo(x + r, y); path.lineTo(x, y + r); path.lineTo(x - r, y); path.closePath(); }
-          else if (kind === 'evolved') { path.moveTo(x, y - r); path.lineTo(x + r, y + r); path.lineTo(x - r, y + r); path.closePath(); }
-          else if (kind === 'young') { path.moveTo(x - r, y); path.lineTo(x + r, y); path.moveTo(x, y - r); path.lineTo(x, y + r); }
-          else { path.moveTo(x + r, y); path.arc(x, y, r, 0, Math.PI * 2); }
-        }
-        ctx.save(); ctx.globalAlpha = .88; ctx.lineWidth = 1.05; ctx.strokeStyle = '#7dddf0'; ctx.stroke(paths.binary); ctx.strokeStyle = '#f0b46e'; ctx.stroke(paths.emission); ctx.strokeStyle = '#d2a0ff'; ctx.stroke(paths.evolved); ctx.strokeStyle = '#84e5a5'; ctx.stroke(paths.young); ctx.strokeStyle = '#ff91df'; ctx.stroke(paths.variable); ctx.restore();
       }
       if (showProperMotion) {
         const occupied = new Set<string>(), cellSize = zoom < 3 ? 22 : zoom < 12 ? 17 : 12, vectorScale = 10, shafts = new Path2D(), heads = new Path2D();
@@ -477,6 +397,25 @@ export default function Home() {
         }
         ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = .3; ctx.strokeStyle = '#0b6574'; ctx.lineWidth = 3.2; ctx.stroke(shafts);
         ctx.globalAlpha = .82; ctx.strokeStyle = '#8debf3'; ctx.fillStyle = '#a6f5fa'; ctx.lineWidth = 1.15; ctx.shadowColor = 'rgba(78,220,235,.7)'; ctx.shadowBlur = 3; ctx.stroke(shafts); ctx.fill(heads);
+        ctx.restore();
+      }
+      if (showClusters) {
+        ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.font = '600 9px Arial';
+        for (const cluster of MAP_CLUSTERS) {
+          const position = skyPosition(cluster.ra, cluster.dec), x = width / 2 + panX - position.x * scale, y = height / 2 + panY - position.y * scale, radius = Math.max(6, cluster.radius * DEG * 54 * scale * CLUSTER_MARKER_PADDING);
+          if (x + radius < 0 || x - radius > width || y + radius < 0 || y - radius > height) continue;
+          ctx.setLineDash([6, 4]); ctx.globalAlpha = .9; ctx.strokeStyle = '#02070b'; ctx.lineWidth = 4.5; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1; ctx.strokeStyle = '#7ceaf4'; ctx.lineWidth = 1.8; ctx.shadowColor = 'rgba(76,226,241,.85)'; ctx.shadowBlur = 6; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
+          if (zoom >= 3 || radius >= 9) { ctx.setLineDash([]); ctx.shadowBlur = 5; ctx.lineWidth = 3.5; ctx.strokeStyle = '#02070b'; ctx.strokeText(cluster.name, x, y - radius - 5); ctx.fillStyle = '#c5f8fc'; ctx.fillText(cluster.name, x, y - radius - 5); }
+        }
+        ctx.setLineDash([]); ctx.textAlign = 'left';
+        for (const i of filteredIndices) {
+          const star = data.stars[i]; if (objectTypeGroup(star[13].trim()) !== 'As') continue;
+          const x = screen[i * 3], y = screen[i * 3 + 1]; if (x < 0 || y < 0 || x > width || y > height) continue;
+          ctx.shadowBlur = 4; ctx.strokeStyle = '#03080c'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y); ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6); ctx.stroke();
+          ctx.strokeStyle = '#ffc873'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y); ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6); ctx.stroke();
+          if (zoom >= 4) { ctx.font = '600 9px Arial'; ctx.lineWidth = 3.5; ctx.strokeStyle = '#02070b'; ctx.strokeText(star[12] || star[0], x + 8, y - 5); ctx.fillStyle = '#ffe0a3'; ctx.fillText(star[12] || star[0], x + 8, y - 5); }
+        }
         ctx.restore();
       }
       const region = selectedRegion.current;
@@ -507,7 +446,7 @@ export default function Home() {
       }
       ctx.globalAlpha = 1;
     });
-  }, [filteredIndices, manualMode, showClusters, showDensity, showObjectSymbols, showProperMotion, showVariables]);
+  }, [filteredIndices, manualMode, showClusters, showProperMotion]);
 
   useEffect(() => { draw(); }, [catalog, draw]);
   useEffect(() => {
@@ -688,11 +627,7 @@ export default function Home() {
         <div className="control-group"><p>Population</p><button className={`filter-row ${enabled.L ? 'active' : ''}`} onClick={() => toggle('L')}>LMC <b>{formatCount(counts.L)} <em>/ {formatCount(totalCounts.L)}</em></b></button><button className={`filter-row ${enabled.S ? 'active' : ''}`} onClick={() => toggle('S')}>SMC <b>{formatCount(counts.S)} <em>/ {formatCount(totalCounts.S)}</em></b></button><button className={`filter-row ${enabled.B ? 'active' : ''}`} onClick={() => toggle('B')}>Bridge <b>{formatCount(counts.B)} <em>/ {formatCount(totalCounts.B)}</em></b></button></div>
         <div className="control-group map-layers"><p>Map layers</p>
           <label><input type="checkbox" checked={showProperMotion} onChange={event => setShowProperMotion(event.target.checked)} /><span><b>Proper motion</b><small>Gaia corrected vectors</small></span></label>
-          <label><input type="checkbox" checked={showVariables} onChange={event => setShowVariables(event.target.checked)} /><span><b>Variable stars</b><small>SIMBAD variable classifications</small></span></label>
-          <label><input type="checkbox" checked={showObjectSymbols} onChange={event => setShowObjectSymbols(event.target.checked)} /><span><b>Object-type symbols</b><small>Binary, emission, evolved and young stars</small></span></label>
-          <label><input type="checkbox" checked={showDensity} onChange={event => setShowDensity(event.target.checked)} /><span><b>Density map</b><small>Filtered-source surface density</small></span></label>
           <label><input type="checkbox" checked={showClusters} onChange={event => setShowClusters(event.target.checked)} /><span><b>Clusters &amp; associations</b><small>Reference regions and SIMBAD associations</small></span></label>
-          {showObjectSymbols && <div className="object-symbol-key" aria-label="Object symbol legend"><span><i className="binary" />Binary</span><span><i className="emission" />Emission</span><span><i className="evolved" />Evolved</span><span><i className="young" />Young</span><span><i className="variable" />Variable</span></div>}
         </div>
         <div className="control-group classification-filters"><p>Spectral type</p><select className="spectral-select" value={spectralFilter} onChange={e => setSpectralFilter(e.target.value as SpectralFilter)} aria-label="Filter by spectral type"><option value="ALL">All types</option><optgroup label="Individual types"><option value="WR">WR</option><option value="O">O</option><option value="B">B</option><option value="A">A</option><option value="F">F</option><option value="G">G</option><option value="K">K</option><option value="M">M</option></optgroup><optgroup label="Ranges"><option value="HOT">Hot stars · WR + OBA</option><option value="COOL">Cool stars · FGKM</option></optgroup></select><p className="classification-subheading">Object type · SIMBAD</p><select className="spectral-select" value={objectTypeFilter} onChange={e => setObjectTypeFilter(e.target.value)} aria-label="Filter by SIMBAD object type"><option value="ALL">All Object Types</option>{objectTypeOptions.map(([type]) => <option key={type} value={type}>{objectTypeLabel(type)}</option>)}</select></div>
         <div className="control-group"><p>G magnitude range</p><div className="color-values"><b>{magMin.toFixed(1)}</b><span>minimum — maximum</span><b>{magMax.toFixed(1)}</b></div><div className="dual-range"><div className="dual-mag-track" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMin} onChange={e => setMagMin(Math.min(Number(e.target.value), magMax - 0.1))} aria-label="Minimum G magnitude" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMax} onChange={e => setMagMax(Math.max(Number(e.target.value), magMin + 0.1))} aria-label="Maximum G magnitude" /></div><div className="range-labels"><span>brighter</span><span>fainter</span></div></div>
