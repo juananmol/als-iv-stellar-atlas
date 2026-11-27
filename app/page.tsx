@@ -263,6 +263,8 @@ export default function Home() {
   const catalogRef = useRef<Catalog | null>(null);
   const screenRef = useRef<Float32Array | null>(null);
   const projectionRef = useRef<Float32Array | null>(null);
+  const renderColorsRef = useRef<string[]>([]);
+  const renderMetricsRef = useRef<Float32Array | null>(null);
   const camera = useRef({ zoom: 1.05, panX: 0, panY: 0 });
   const targetZoom = useRef(1.05);
   const targetPan = useRef({ x: 0, y: 0 });
@@ -307,8 +309,10 @@ export default function Home() {
     fetch(publicUrl('catalog.json')).then(async r => { if (!r.ok) throw new Error(`${r.status}`); return await r.json() as Catalog; }).then(data => {
       if (cancelled) return;
       const projection = new Float32Array(data.stars.length * 2);
+      const renderMetrics = new Float32Array(data.stars.length * 2), renderColors = new Array<string>(data.stars.length);
       data.stars.forEach((star, index) => { const position = skyPosition(star[1], star[2]); projection[index * 2] = position.x; projection[index * 2 + 1] = position.y; });
-      catalogRef.current = data; projectionRef.current = projection; screenRef.current = new Float32Array(data.stars.length * 3); setCatalog(data); setLoading('Catalogue ready');
+      data.stars.forEach((star, index) => { const g = star[3] ?? 18.5; renderColors[index] = starColor(star[4]); renderMetrics[index * 2] = brightnessRadius(g); renderMetrics[index * 2 + 1] = Math.max(.28, Math.min(.94, .32 + (20.5 - g) * .08)); });
+      catalogRef.current = data; projectionRef.current = projection; screenRef.current = new Float32Array(data.stars.length * 3); renderColorsRef.current = renderColors; renderMetricsRef.current = renderMetrics; setCatalog(data); setLoading('Catalogue ready');
     }).catch(() => setLoading('Could not load catalog.json'));
     return () => { cancelled = true; };
   }, []);
@@ -361,33 +365,33 @@ export default function Home() {
   const draw = useCallback(() => {
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => {
-      const canvas = canvasRef.current, stage = stageRef.current, data = catalogRef.current, screen = screenRef.current, projection = projectionRef.current;
-      if (!canvas || !stage || !data || !screen || !projection) return;
-      const rect = stage.getBoundingClientRect(); const dpr = Math.min(devicePixelRatio || 1, 2); const width = Math.max(1, rect.width), height = Math.max(1, rect.height);
+      const canvas = canvasRef.current, stage = stageRef.current, data = catalogRef.current, screen = screenRef.current, projection = projectionRef.current, renderMetrics = renderMetricsRef.current, renderColors = renderColorsRef.current;
+      if (!canvas || !stage || !data || !screen || !projection || !renderMetrics) return;
+      const rect = stage.getBoundingClientRect(); const width = Math.max(1, rect.width), height = Math.max(1, rect.height), dpr = Math.min(devicePixelRatio || 1, width <= 700 ? 1.35 : 2);
       if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) { canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr); canvas.style.width = `${width}px`; canvas.style.height = `${height}px`; }
       const ctx = canvas.getContext('2d'); if (!ctx) return; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height);
-      const { zoom, panX, panY } = camera.current; const scale = Math.min(width, height) * 0.0205 * zoom;
+      const { zoom, panX, panY } = camera.current; const scale = Math.min(width, height) * 0.0205 * zoom, zoomMarkerScale = markerZoomScale(zoom);
       screen.fill(0);
       for (const i of filteredIndices) {
-        const star = data.stars[i], g = star[3] ?? 18.5;
         const x = projection[i * 2], y = projection[i * 2 + 1];
-        const sx = width / 2 + panX - x * scale, sy2 = height / 2 + panY - y * scale; const radius = brightnessRadius(g) * markerZoomScale(zoom);
+        const sx = width / 2 + panX - x * scale, sy2 = height / 2 + panY - y * scale; const radius = renderMetrics[i * 2] * zoomMarkerScale;
         screen[i * 3] = sx; screen[i * 3 + 1] = sy2; screen[i * 3 + 2] = radius; if (sx < -8 || sy2 < -8 || sx > width + 8 || sy2 > height + 8) continue;
-        ctx.globalAlpha = Math.max(.28, Math.min(.94, .32 + (20.5 - g) * .08)); ctx.fillStyle = starColor(star[4]);
+        ctx.globalAlpha = renderMetrics[i * 2 + 1]; ctx.fillStyle = renderColors[i];
         if (radius < 1.8) ctx.fillRect(sx, sy2, Math.max(1, radius), Math.max(1, radius)); else { ctx.beginPath(); ctx.arc(sx, sy2, radius, 0, Math.PI * 2); ctx.fill(); if (radius > 2.8) { ctx.globalAlpha = .09; ctx.beginPath(); ctx.arc(sx, sy2, radius * 2.7, 0, Math.PI * 2); ctx.fill(); } }
       }
       if (showProperMotion) {
-        const occupied = new Set<string>(), cellSize = zoom < 3 ? 18 : zoom < 12 ? 14 : 10, vectorScale = 10;
-        ctx.save(); ctx.strokeStyle = '#7feaf4'; ctx.fillStyle = '#7feaf4'; ctx.lineWidth = 1; ctx.globalAlpha = .62;
+        const occupied = new Set<string>(), cellSize = zoom < 3 ? 22 : zoom < 12 ? 17 : 12, vectorScale = 10, shafts = new Path2D(), heads = new Path2D();
         for (const i of filteredIndices) {
-          const star = data.stars[i], pmra = star[7], pmdec = star[8], sx = screen[i * 3], sy = screen[i * 3 + 1];
+          const star = data.stars[i], pmra = star[7], pmdec = star[8], sx = screen[i * 3], sy = screen[i * 3 + 1], worldX = -projection[i * 2] * scale, worldY = -projection[i * 2 + 1] * scale;
           if (pmra == null || pmdec == null || !Number.isFinite(pmra) || !Number.isFinite(pmdec) || sx < 0 || sy < 0 || sx > width || sy > height) continue;
-          const key = `${Math.floor(sx / cellSize)}:${Math.floor(sy / cellSize)}`; if (occupied.has(key) && i !== selectedRef.current) continue; occupied.add(key);
+          const key = `${Math.floor(worldX / cellSize)}:${Math.floor(worldY / cellSize)}`; if (occupied.has(key) && i !== selectedRef.current) continue; occupied.add(key);
           const magnitude = Math.hypot(pmra, pmdec); if (magnitude < .03) continue;
           const length = Math.min(42, magnitude * vectorScale), ux = -pmra / magnitude, uy = -pmdec / magnitude, start = Math.max(2.5, screen[i * 3 + 2] + 1.5), x1 = sx + ux * start, y1 = sy + uy * start, x2 = sx + ux * (start + length), y2 = sy + uy * (start + length), head = Math.min(4.5, Math.max(2.5, length * .28)), angle = Math.atan2(y2 - y1, x2 - x1);
-          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x2 - head * Math.cos(angle - .55), y2 - head * Math.sin(angle - .55)); ctx.lineTo(x2 - head * Math.cos(angle + .55), y2 - head * Math.sin(angle + .55)); ctx.closePath(); ctx.fill();
+          shafts.moveTo(x1, y1); shafts.lineTo(x2, y2);
+          heads.moveTo(x2, y2); heads.lineTo(x2 - head * Math.cos(angle - .55), y2 - head * Math.sin(angle - .55)); heads.lineTo(x2 - head * Math.cos(angle + .55), y2 - head * Math.sin(angle + .55)); heads.closePath();
         }
+        ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = .3; ctx.strokeStyle = '#0b6574'; ctx.lineWidth = 3.2; ctx.stroke(shafts);
+        ctx.globalAlpha = .82; ctx.strokeStyle = '#8debf3'; ctx.fillStyle = '#a6f5fa'; ctx.lineWidth = 1.15; ctx.shadowColor = 'rgba(78,220,235,.7)'; ctx.shadowBlur = 3; ctx.stroke(shafts); ctx.fill(heads);
         ctx.restore();
       }
       const region = selectedRegion.current;
