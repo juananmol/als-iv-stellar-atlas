@@ -1,6 +1,9 @@
 # ALS IV · Stellar Atlas
 
-Interactive sky map of the 51,954 stars in the final ALS IV catalogue.
+Interactive sky map of the 51 954 stars in the final ALS IV catalogue.
+
+The web version is available at
+[juananmol.github.io/als-iv-stellar-atlas](https://juananmol.github.io/als-iv-stellar-atlas/).
 
 The public website is automatically deployed with GitHub Pages whenever the
 `main` branch is updated.
@@ -34,11 +37,5 @@ npm run catalog
 To export a different catalogue version:
 
 ```bash
-npm run catalog -- --source ../Data/catalouge/selected/archivo.fits
+npm run catalog -- --source ../Data/catalouge/selected/file.fits
 ```
-
-## Projection
-
-- The map uses a 2D sky projection derived from right ascension and declination.
-- The full catalogue is displayed; parallax is not used for positioning or selection.
-- Drag to pan and use the mouse wheel to zoom in or out.
