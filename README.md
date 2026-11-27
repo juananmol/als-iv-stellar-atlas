@@ -1,9 +1,10 @@
-# ALS IV · Stellar Atlas
+# ALS IV: A Massive Star Census of the Magellanic Cloud Systems
 
-Interactive sky map of the 51 954 stars in the final ALS IV catalogue.
+Interactive sky map of the 51 954 massive stars of the Magellanic Clouds in
+the final ALS IV catalogue.
 
 The web version is available at
-[juananmol.github.io/als-iv-stellar-atlas](https://juananmol.github.io/als-iv-stellar-atlas/).
+<a href="https://juananmol.github.io/als-iv-stellar-atlas/" target="_blank" rel="noopener noreferrer">juananmol.github.io/als-iv-stellar-atlas</a>.
 
 The public website is automatically deployed with GitHub Pages whenever the
 `main` branch is updated.
