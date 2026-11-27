@@ -1,4 +1,4 @@
-# ALS IV: A Massive Star Census of the Magellanic Cloud Systems
+# ALS IV: A Massive Star Census of the Magellanic Clouds
 
 Interactive sky map of the 51 954 massive stars of the Magellanic Clouds in
 the final ALS IV catalogue.
