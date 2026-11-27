@@ -268,6 +268,8 @@ export default function Home() {
   const targetPan = useRef({ x: 0, y: 0 });
   const coordinateFocus = useRef<{ ra: number; dec: number } | null>(null);
   const drag = useRef({ active: false, moved: false, x: 0, y: 0 });
+  const activePointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ distance: number; midX: number; midY: number; zoom: number; panX: number; panY: number } | null>(null);
   const manualDrag = useRef({ active: false, moved: false, x: 0, y: 0 });
   const manualSelectionRef = useRef<Set<number>>(new Set());
   const frame = useRef(0);
@@ -433,6 +435,12 @@ export default function Home() {
   }
   function onPointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (activePointers.current.size >= 2) {
+      const [a, b] = [...activePointers.current.values()], rect = event.currentTarget.getBoundingClientRect();
+      pinch.current = { distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), midX: (a.x + b.x) / 2 - rect.left - rect.width / 2, midY: (a.y + b.y) / 2 - rect.top - rect.height / 2, zoom: camera.current.zoom, panX: camera.current.panX, panY: camera.current.panY };
+      drag.current.active = false; manualDrag.current.active = false; setManualBox(null); setManualCircle(null); return;
+    }
     if (manualMode) {
       const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
       manualDrag.current = { active: true, moved: false, x, y };
@@ -443,6 +451,15 @@ export default function Home() {
     drag.current = { active: true, moved: false, x: event.clientX, y: event.clientY };
   }
   function onPointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (activePointers.current.has(event.pointerId)) activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch.current && activePointers.current.size >= 2) {
+      const [a, b] = [...activePointers.current.values()], rect = event.currentTarget.getBoundingClientRect(), currentDistance = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), ratio = currentDistance / pinch.current.distance;
+      const nextZoom = Math.max(.3, Math.min(14_000, pinch.current.zoom * ratio)), appliedRatio = nextZoom / pinch.current.zoom;
+      const midX = (a.x + b.x) / 2 - rect.left - rect.width / 2, midY = (a.y + b.y) / 2 - rect.top - rect.height / 2;
+      cancelAnimationFrame(zoomFrame.current); coordinateFocus.current = null;
+      camera.current = { zoom: nextZoom, panX: pinch.current.panX * appliedRatio + pinch.current.midX * (1 - appliedRatio) + midX - pinch.current.midX, panY: pinch.current.panY * appliedRatio + pinch.current.midY * (1 - appliedRatio) + midY - pinch.current.midY };
+      targetZoom.current = nextZoom; targetPan.current = { x: camera.current.panX, y: camera.current.panY }; draw(); return;
+    }
     if (manualMode) {
       if (!manualDrag.current.active) return;
       const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -454,6 +471,14 @@ export default function Home() {
     if (!drag.current.active) return; const dx = event.clientX - drag.current.x, dy = event.clientY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 2) drag.current.moved = true; camera.current.panX += dx; camera.current.panY += dy; targetPan.current = { x: camera.current.panX, y: camera.current.panY }; coordinateFocus.current = null; drag.current.x = event.clientX; drag.current.y = event.clientY; draw();
   }
   function onPointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const wasPinching = pinch.current != null;
+    activePointers.current.delete(event.pointerId);
+    if (wasPinching) {
+      pinch.current = null; drag.current.active = false; manualDrag.current.active = false;
+      const remaining = [...activePointers.current.values()][0];
+      if (remaining && !manualMode) drag.current = { active: true, moved: true, x: remaining.x, y: remaining.y };
+      return;
+    }
     if (manualMode) {
       if (!manualDrag.current.active) return; manualDrag.current.active = false;
       const screen = screenRef.current, rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -550,7 +575,7 @@ export default function Home() {
         <div className="control-group"><p>BP−RP colour range</p><div className="color-values"><b>{colorMin.toFixed(2)}</b><span>minimum — maximum</span><b>{colorMax.toFixed(2)}</b></div><div className="dual-range"><div className="dual-color-track" /><input type="range" min={COLOR_MIN} max={COLOR_MAX} step="0.05" value={colorMin} onChange={e => setColorMin(Math.min(Number(e.target.value), colorMax - 0.05))} aria-label="Minimum BP-RP colour" /><input type="range" min={COLOR_MIN} max={COLOR_MAX} step="0.05" value={colorMax} onChange={e => setColorMax(Math.max(Number(e.target.value), colorMin + 0.05))} aria-label="Maximum BP-RP colour" /></div><div className="range-labels"><span>blue</span><span>red</span></div></div>
         <div className="control-group legend"><p>Synthetic photometry</p><div className="gradient" /><div className="legend-labels"><span>blue · BP−RP</span><span>red</span></div><div className="size-key"><i /><i /><i /><i /><i /><span>5 levels · G brightness</span></div></div></aside>
       <section className={`sky-stage ${manualMode ? 'manual-selecting' : ''}`} ref={stageRef}>
-        <canvas ref={canvasRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { drag.current.active = false; manualDrag.current.active = false; setManualBox(null); setManualCircle(null); }} onWheel={onWheel} aria-label="Interactive 2D stellar map" />
+        <canvas ref={canvasRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={event => { activePointers.current.delete(event.pointerId); pinch.current = null; drag.current.active = false; manualDrag.current.active = false; setManualBox(null); setManualCircle(null); }} onWheel={onWheel} aria-label="Interactive 2D stellar map" />
         {manualBox && <div className="manual-selection-box" style={{ left: Math.min(manualBox.x1, manualBox.x2), top: Math.min(manualBox.y1, manualBox.y2), width: Math.abs(manualBox.x2 - manualBox.x1), height: Math.abs(manualBox.y2 - manualBox.y1) }} />}
         {manualCircle && <div className="manual-selection-circle" style={{ left: manualCircle.x - manualCircle.radius, top: manualCircle.y - manualCircle.radius, width: manualCircle.radius * 2, height: manualCircle.radius * 2 }} />}
         {manualPolygon.length > 0 && <svg className="manual-polygon-overlay" aria-hidden="true">{manualPolygon.length >= 3 ? <polygon points={manualPolygon.map(point => `${point.x},${point.y}`).join(' ')} /> : <polyline points={manualPolygon.map(point => `${point.x},${point.y}`).join(' ')} />}{manualPolygon.map((point, index) => <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="3" />)}</svg>}
