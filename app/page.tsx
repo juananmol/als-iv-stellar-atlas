@@ -408,14 +408,6 @@ export default function Home() {
           ctx.globalAlpha = 1; ctx.strokeStyle = '#7ceaf4'; ctx.lineWidth = 1.8; ctx.shadowColor = 'rgba(76,226,241,.85)'; ctx.shadowBlur = 6; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
           if (zoom >= 3 || radius >= 9) { ctx.setLineDash([]); ctx.shadowBlur = 5; ctx.lineWidth = 3.5; ctx.strokeStyle = '#02070b'; ctx.strokeText(cluster.name, x, y - radius - 5); ctx.fillStyle = '#c5f8fc'; ctx.fillText(cluster.name, x, y - radius - 5); }
         }
-        ctx.setLineDash([]); ctx.textAlign = 'left';
-        for (const i of filteredIndices) {
-          const star = data.stars[i]; if (objectTypeGroup(star[13].trim()) !== 'As') continue;
-          const x = screen[i * 3], y = screen[i * 3 + 1]; if (x < 0 || y < 0 || x > width || y > height) continue;
-          ctx.shadowBlur = 4; ctx.strokeStyle = '#03080c'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y); ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6); ctx.stroke();
-          ctx.strokeStyle = '#ffc873'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y); ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6); ctx.stroke();
-          if (zoom >= 4) { ctx.font = '600 9px Arial'; ctx.lineWidth = 3.5; ctx.strokeStyle = '#02070b'; ctx.strokeText(star[12] || star[0], x + 8, y - 5); ctx.fillStyle = '#ffe0a3'; ctx.fillText(star[12] || star[0], x + 8, y - 5); }
-        }
         ctx.restore();
       }
       const region = selectedRegion.current;
@@ -534,7 +526,7 @@ export default function Home() {
       if (manualTool === 'circle') { const radius = Math.hypot(x - manualDrag.current.x, y - manualDrag.current.y), radiusSquared = radius * radius; for (const index of filteredIndices) { if (screen[index * 3 + 2] <= 0) continue; const dx = screen[index * 3] - manualDrag.current.x, dy = screen[index * 3 + 1] - manualDrag.current.y; if (dx * dx + dy * dy <= radiusSquared) next.add(index); } }
       setManualBox(null); setManualCircle(null); commitManualSelection(next); return;
     }
-    if (!drag.current.active) return; drag.current.active = false; if (!drag.current.moved) pickStar(event.clientX, event.clientY, event.pointerType === 'touch' ? 22 : 11);
+    if (!drag.current.active) return; drag.current.active = false; if (!drag.current.moved && !pickMapCluster(event.clientX, event.clientY, event.pointerType === 'touch')) pickStar(event.clientX, event.clientY, event.pointerType === 'touch' ? 22 : 11);
   }
   function panForCoordinates(ra: number, dec: number, zoom: number) {
     const stage = stageRef.current; if (!stage) return targetPan.current;
@@ -599,6 +591,17 @@ export default function Home() {
   function frameCloud(cloud: keyof typeof CLOUD_VIEWS) { const view = CLOUD_VIEWS[cloud]; selectedRegion.current = null; setNotice(`Focused on the ${cloud}`); focusRegion(view.ra, view.dec, view.zoom); }
   function frameAll() { const systemCenter = { ra: ALL_VIEW.ra, dec: ALL_VIEW.dec }, basePan = panForCoordinates(systemCenter.ra, systemCenter.dec, ALL_VIEW.zoom), pan = { x: basePan.x, y: basePan.y + ALL_VIEW.offsetY }; selectedRegion.current = null; setNotice(''); setSmoothZoom(ALL_VIEW.zoom, systemCenter, pan); coordinateFocus.current = null; }
   function updateSelection(index: number | null) { if (index != null) selectedRegion.current = null; selectedRef.current = index; setSelected(index); }
+  function pickMapCluster(clientX: number, clientY: number, touch: boolean) {
+    const stage = stageRef.current; if (!showClusters || !stage) return false;
+    const rect = stage.getBoundingClientRect(), pointerX = clientX - rect.left, pointerY = clientY - rect.top, { zoom, panX, panY } = camera.current, scale = Math.min(rect.width, rect.height) * .0205 * zoom;
+    let match: (typeof MAP_CLUSTERS)[number] | null = null, bestDistance = Number.POSITIVE_INFINITY;
+    for (const cluster of MAP_CLUSTERS) {
+      const position = skyPosition(cluster.ra, cluster.dec), x = rect.width / 2 + panX - position.x * scale, y = rect.height / 2 + panY - position.y * scale, radius = Math.max(6, cluster.radius * DEG * 54 * scale * CLUSTER_MARKER_PADDING), distance = Math.hypot(pointerX - x, pointerY - y), hitRadius = Math.max(touch ? 30 : 22, radius + (touch ? 14 : 10));
+      if (distance <= hitRadius && distance < bestDistance) { match = cluster; bestDistance = distance; }
+    }
+    if (!match) return false;
+    focusCluster({ kind: 'cluster', label: match.name, detail: 'Cluster', ra: match.ra, dec: match.dec, zoom: match.zoom, radius: match.radius }); return true;
+  }
   function pickStar(clientX: number, clientY: number, hitRadius = 11) { const rect = canvasRef.current?.getBoundingClientRect(), screen = screenRef.current; if (!rect || !screen || !catalog) return; const x = clientX - rect.left, y = clientY - rect.top; let best = -1, bestD = hitRadius * hitRadius; for (let i = 0; i < catalog.stars.length; i++) { if (!screen[i * 3 + 2]) continue; const dx = screen[i * 3] - x, dy = screen[i * 3 + 1] - y, d = dx * dx + dy * dy; if (d < bestD) { bestD = d; best = i; } } selectedRegion.current = null; if (best >= 0) { coordinateFocus.current = { ra: catalog.stars[best][1], dec: catalog.stars[best][2] }; updateSelection(best); } else { coordinateFocus.current = null; updateSelection(null); } draw(); }
   function toggle(pop: Population) { setEnabled(current => ({ ...current, [pop]: !current[pop] })); }
   function clearSelection() { selectedRegion.current = null; updateSelection(null); coordinateFocus.current = null; targetPan.current = { x: camera.current.panX, y: camera.current.panY }; draw(); }
@@ -640,7 +643,7 @@ export default function Home() {
         <div className="control-group"><p>Population</p><button className={`filter-row ${enabled.L ? 'active' : ''}`} onClick={() => toggle('L')}>LMC <b>{formatCount(counts.L)} <em>/ {formatCount(totalCounts.L)}</em></b></button><button className={`filter-row ${enabled.S ? 'active' : ''}`} onClick={() => toggle('S')}>SMC <b>{formatCount(counts.S)} <em>/ {formatCount(totalCounts.S)}</em></b></button><button className={`filter-row ${enabled.B ? 'active' : ''}`} onClick={() => toggle('B')}>Bridge <b>{formatCount(counts.B)} <em>/ {formatCount(totalCounts.B)}</em></b></button></div>
         <div className="control-group map-layers"><p>Map layers</p>
           <label><input type="checkbox" checked={showProperMotion} onChange={event => setShowProperMotion(event.target.checked)} /><span><b>Proper motion</b><small>Gaia corrected vectors</small></span></label>
-          <label><input type="checkbox" checked={showClusters} onChange={event => setShowClusters(event.target.checked)} /><span><b>Clusters &amp; associations</b><small>Reference regions and SIMBAD associations</small></span></label>
+          <label><input type="checkbox" checked={showClusters} onChange={event => setShowClusters(event.target.checked)} /><span><b>Clusters</b><small>Click a marker to zoom into its reference region</small></span></label>
         </div>
         <div className="control-group classification-filters"><p>Spectral type</p><select className="spectral-select" value={spectralFilter} onChange={e => setSpectralFilter(e.target.value as SpectralFilter)} aria-label="Filter by spectral type"><option value="ALL">All types</option><optgroup label="Individual types"><option value="WR">WR</option><option value="O">O</option><option value="B">B</option><option value="A">A</option><option value="F">F</option><option value="G">G</option><option value="K">K</option><option value="M">M</option></optgroup><optgroup label="Ranges"><option value="HOT">Hot stars · WR + OBA</option><option value="COOL">Cool stars · FGKM</option></optgroup></select><p className="classification-subheading">Object type · SIMBAD</p><select className="spectral-select" value={objectTypeFilter} onChange={e => setObjectTypeFilter(e.target.value)} aria-label="Filter by SIMBAD object type"><option value="ALL">All Object Types</option>{objectTypeOptions.map(([type]) => <option key={type} value={type}>{objectTypeLabel(type)}</option>)}</select></div>
         <div className="control-group"><p>G magnitude range</p><div className="color-values"><b>{magMin.toFixed(1)}</b><span>minimum — maximum</span><b>{magMax.toFixed(1)}</b></div><div className="dual-range"><div className="dual-mag-track" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMin} onChange={e => setMagMin(Math.min(Number(e.target.value), magMax - 0.1))} aria-label="Minimum G magnitude" /><input type="range" min={MAG_MIN} max={MAG_MAX} step="0.1" value={magMax} onChange={e => setMagMax(Math.max(Number(e.target.value), magMin + 0.1))} aria-label="Maximum G magnitude" /></div><div className="range-labels"><span>brighter</span><span>fainter</span></div></div>
@@ -660,7 +663,7 @@ export default function Home() {
         </div>}
         <div className="orientation"><span>N</span><i /><span>E</span></div><div className="map-controls"><div className="region-controls" aria-label="Map framing presets"><button type="button" onClick={() => frameCloud('LMC')}>LMC</button><button type="button" onClick={() => frameCloud('SMC')}>SMC</button><button type="button" onClick={frameAll}>All</button></div><div className="zoom-controls" aria-label="Map zoom controls"><button type="button" onClick={() => zoomBy(1.16)} aria-label="Zoom in">+</button><button type="button" onClick={() => zoomBy(1 / 1.16)} aria-label="Zoom out">−</button></div></div>
         {showProperMotion && <div className="proper-motion-scale" aria-hidden="true"><i /><span>1 mas yr⁻¹</span></div>}
-        <div className="view-chip">{manualMode ? manualTool === 'stars' ? 'Click stars to add or remove them' : manualTool === 'rectangle' ? 'Drag to draw a rectangular selection' : manualTool === 'circle' ? 'Drag from the centre to draw a circular selection' : 'Click to add vertices, then apply the polygon' : 'Drag to pan · scroll or pinch to zoom · click a star'}</div>
+        <div className="view-chip">{manualMode ? manualTool === 'stars' ? 'Click stars to add or remove them' : manualTool === 'rectangle' ? 'Drag to draw a rectangular selection' : manualTool === 'circle' ? 'Drag from the centre to draw a circular selection' : 'Click to add vertices, then apply the polygon' : showClusters ? 'Drag to pan · scroll or pinch to zoom · click a star or cluster' : 'Drag to pan · scroll or pinch to zoom · click a star'}</div>
       </section>
       {star && <button type="button" className="mobile-detail-backdrop" onClick={clearSelection} aria-label="Close source information" />}
       <aside className={`detail-panel ${star ? 'has-source' : ''}`}><div className="detail-title"><p className="eyebrow">Source inspector</p>{star && <button onClick={clearSelection} aria-label="Close">×</button>}</div>{!star ? <div className="empty-selection"><div className="target-icon">⌖</div><h2>Select a star</h2><p>Click a source to inspect its astrometry, photometry and cross-identifiers.</p></div> : <StarDetails star={star} rowIndex={selected ?? 0} simbadIds={selected == null ? '' : catalog?.simbadIds?.[selected] ?? catalog?.simbadAliases?.[selected] ?? ''} />}</aside>
