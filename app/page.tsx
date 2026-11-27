@@ -294,6 +294,7 @@ export default function Home() {
   const [queryInitialScope, setQueryInitialScope] = useState<QueryScope>('view');
   const [tableOpen, setTableOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [showProperMotion, setShowProperMotion] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualTool, setManualTool] = useState<ManualTool>('stars');
   const [manualSelection, setManualSelection] = useState<number[]>([]);
@@ -375,6 +376,20 @@ export default function Home() {
         ctx.globalAlpha = Math.max(.28, Math.min(.94, .32 + (20.5 - g) * .08)); ctx.fillStyle = starColor(star[4]);
         if (radius < 1.8) ctx.fillRect(sx, sy2, Math.max(1, radius), Math.max(1, radius)); else { ctx.beginPath(); ctx.arc(sx, sy2, radius, 0, Math.PI * 2); ctx.fill(); if (radius > 2.8) { ctx.globalAlpha = .09; ctx.beginPath(); ctx.arc(sx, sy2, radius * 2.7, 0, Math.PI * 2); ctx.fill(); } }
       }
+      if (showProperMotion) {
+        const occupied = new Set<string>(), cellSize = zoom < 3 ? 18 : zoom < 12 ? 14 : 10, vectorScale = 10;
+        ctx.save(); ctx.strokeStyle = '#7feaf4'; ctx.fillStyle = '#7feaf4'; ctx.lineWidth = 1; ctx.globalAlpha = .62;
+        for (const i of filteredIndices) {
+          const star = data.stars[i], pmra = star[7], pmdec = star[8], sx = screen[i * 3], sy = screen[i * 3 + 1];
+          if (pmra == null || pmdec == null || !Number.isFinite(pmra) || !Number.isFinite(pmdec) || sx < 0 || sy < 0 || sx > width || sy > height) continue;
+          const key = `${Math.floor(sx / cellSize)}:${Math.floor(sy / cellSize)}`; if (occupied.has(key) && i !== selectedRef.current) continue; occupied.add(key);
+          const magnitude = Math.hypot(pmra, pmdec); if (magnitude < .03) continue;
+          const length = Math.min(42, magnitude * vectorScale), ux = -pmra / magnitude, uy = -pmdec / magnitude, start = Math.max(2.5, screen[i * 3 + 2] + 1.5), x1 = sx + ux * start, y1 = sy + uy * start, x2 = sx + ux * (start + length), y2 = sy + uy * (start + length), head = Math.min(4.5, Math.max(2.5, length * .28)), angle = Math.atan2(y2 - y1, x2 - x1);
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x2 - head * Math.cos(angle - .55), y2 - head * Math.sin(angle - .55)); ctx.lineTo(x2 - head * Math.cos(angle + .55), y2 - head * Math.sin(angle + .55)); ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
       const region = selectedRegion.current;
       if (region) {
         const position = skyPosition(region.ra, region.dec), x = width / 2 + panX - position.x * scale, y = height / 2 + panY - position.y * scale, regionRadius = region.radius * DEG * 54 * scale * CLUSTER_MARKER_PADDING;
@@ -403,7 +418,7 @@ export default function Home() {
       }
       ctx.globalAlpha = 1;
     });
-  }, [filteredIndices, manualMode]);
+  }, [filteredIndices, manualMode, showProperMotion]);
 
   useEffect(() => { draw(); }, [catalog, draw]);
   useEffect(() => {
@@ -588,6 +603,8 @@ export default function Home() {
           <div className="manual-actions"><button type="button" onClick={() => commitManualSelection(new Set())}>Clear</button><button type="button" onClick={cancelManualSelection}>Cancel</button><button type="button" className="primary" disabled={!manualSelection.length} onClick={queryManualSelection}>Open Query</button></div>
         </div>}
         <div className="orientation"><span>N</span><i /><span>E</span></div><div className="map-controls"><div className="region-controls" aria-label="Map framing presets"><button type="button" onClick={() => frameCloud('LMC')}>LMC</button><button type="button" onClick={() => frameCloud('SMC')}>SMC</button><button type="button" onClick={frameAll}>All</button></div><div className="zoom-controls" aria-label="Map zoom controls"><button type="button" onClick={() => zoomBy(1.16)} aria-label="Zoom in">+</button><button type="button" onClick={() => zoomBy(1 / 1.16)} aria-label="Zoom out">−</button></div></div>
+        <label className="proper-motion-toggle"><input type="checkbox" checked={showProperMotion} onChange={event => setShowProperMotion(event.target.checked)} /><span>Proper motion vectors</span></label>
+        {showProperMotion && <div className="proper-motion-scale" aria-hidden="true"><i /><span>1 mas yr⁻¹</span></div>}
         <div className="view-chip">{manualMode ? manualTool === 'stars' ? 'Click stars to add or remove them' : manualTool === 'rectangle' ? 'Drag to draw a rectangular selection' : manualTool === 'circle' ? 'Drag from the centre to draw a circular selection' : 'Click to add vertices, then apply the polygon' : 'Drag to pan · scroll or pinch to zoom · click a star'}</div>
       </section>
       {star && <button type="button" className="mobile-detail-backdrop" onClick={clearSelection} aria-label="Close source information" />}
