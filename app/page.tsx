@@ -572,16 +572,29 @@ export default function Home() {
   }
   function zoomBy(factor: number) { setSmoothZoom(targetZoom.current * factor); }
   function focusRegion(ra: number, dec: number, zoom: number) { coordinateFocus.current = { ra, dec }; targetPan.current = panForCoordinates(ra, dec, zoom); setSmoothZoom(zoom, { ra, dec }); }
-  function focusNearbySearchResult(ra: number, dec: number) {
-    const stage = stageRef.current, zoom = targetZoom.current;
-    if (!stage || zoom < 8) { focusRegion(ra, dec, 28); return; }
-    const rect = stage.getBoundingClientRect(), position = skyPosition(ra, dec), scale = Math.min(rect.width, rect.height) * .0205 * zoom;
-    const x = rect.width / 2 + targetPan.current.x - position.x * scale, y = rect.height / 2 + targetPan.current.y - position.y * scale;
-    const nearX = rect.width * .42, nearY = rect.height * .42;
-    if (x < -nearX || x > rect.width + nearX || y < -nearY || y > rect.height + nearY) { focusRegion(ra, dec, 28); return; }
-    const marginX = Math.min(90, rect.width * .18), marginY = Math.min(80, rect.height * .18), safeX = Math.max(marginX, Math.min(rect.width - marginX, x)), safeY = Math.max(marginY, Math.min(rect.height - marginY, y));
-    const pan = { x: targetPan.current.x + safeX - x, y: targetPan.current.y + safeY - y };
-    coordinateFocus.current = { ra, dec }; setSmoothZoom(zoom, { ra, dec }, pan);
+  function focusNearbySearchResult(index: number, previousIndex: number | null) {
+    const stage = stageRef.current, data = catalogRef.current, projection = projectionRef.current, metrics = renderMetricsRef.current;
+    if (!stage || !data || !projection || !metrics) return;
+    const star = data.stars[index], rect = stage.getBoundingClientRect(), baseScale = Math.min(rect.width, rect.height) * .0205, px = projection[index * 2], py = projection[index * 2 + 1];
+    let nearestIndex = -1, nearestSquared = Number.POSITIVE_INFINITY;
+    for (let other = 0; other < data.stars.length; other++) {
+      if (other === index) continue; const dx = projection[other * 2] - px, dy = projection[other * 2 + 1] - py, distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared < nearestSquared) { nearestSquared = distanceSquared; nearestIndex = other; }
+    }
+    const targetRadius = metrics[index * 2], neighbourRadius = nearestIndex < 0 ? targetRadius : metrics[nearestIndex * 2], desiredSpacing = Math.max(24, 18 + (targetRadius + neighbourRadius) * 2.4);
+    const adaptiveZoom = Math.max(18, Math.min(2_000, desiredSpacing / Math.max(.0001, Math.sqrt(nearestSquared) * baseScale))), currentZoom = targetZoom.current;
+    const currentScale = baseScale * currentZoom, currentX = rect.width / 2 + targetPan.current.x - px * currentScale, currentY = rect.height / 2 + targetPan.current.y - py * currentScale;
+    const nearCurrentView = currentX >= -rect.width * .85 && currentX <= rect.width * 1.85 && currentY >= -rect.height * .85 && currentY <= rect.height * 1.85;
+    let nearPreviousStar = false;
+    if (previousIndex != null && previousIndex !== index) {
+      const dx = projection[previousIndex * 2] - px, dy = projection[previousIndex * 2 + 1] - py;
+      nearPreviousStar = Math.hypot(dx, dy) * currentScale <= Math.hypot(rect.width, rect.height) * 1.8;
+    }
+    const preserveLocalZoom = currentZoom >= 8 && (nearCurrentView || nearPreviousStar), zoom = preserveLocalZoom ? Math.max(currentZoom, adaptiveZoom) : adaptiveZoom, ratio = zoom / Math.max(currentZoom, .0001);
+    const scaledPan = { x: targetPan.current.x * ratio, y: targetPan.current.y * ratio }, scale = baseScale * zoom, x = rect.width / 2 + scaledPan.x - px * scale, y = rect.height / 2 + scaledPan.y - py * scale;
+    const marginX = Math.min(100, rect.width * .2), marginY = Math.min(90, rect.height * .2), safeX = Math.max(marginX, Math.min(rect.width - marginX, x)), safeY = Math.max(marginY, Math.min(rect.height - marginY, y));
+    const pan = preserveLocalZoom ? { x: scaledPan.x + safeX - x, y: scaledPan.y + safeY - y } : panForCoordinates(star[1], star[2], zoom);
+    coordinateFocus.current = { ra: star[1], dec: star[2] }; setSmoothZoom(zoom, { ra: star[1], dec: star[2] }, pan);
   }
   function frameCloud(cloud: keyof typeof CLOUD_VIEWS) { const view = CLOUD_VIEWS[cloud]; selectedRegion.current = null; setNotice(`Focused on the ${cloud}`); focusRegion(view.ra, view.dec, view.zoom); }
   function frameAll() { const systemCenter = { ra: ALL_VIEW.ra, dec: ALL_VIEW.dec }, basePan = panForCoordinates(systemCenter.ra, systemCenter.dec, ALL_VIEW.zoom), pan = { x: basePan.x, y: basePan.y + ALL_VIEW.offsetY }; selectedRegion.current = null; setNotice(''); setSmoothZoom(ALL_VIEW.zoom, systemCenter, pan); coordinateFocus.current = null; }
@@ -592,8 +605,8 @@ export default function Home() {
   function resetView() { setMagMin(MAG_MIN); setMagMax(MAG_MAX); setColorMin(COLOR_MIN); setColorMax(COLOR_MAX); setSpectralFilter('ALL'); setObjectTypeFilter('ALL'); setEnabled({ L: true, S: true, B: true }); updateSelection(null); setNotice(''); frameAll(); }
   function focusStar(index: number) {
     const match = catalog?.stars[index]; if (!match) return;
-    const pop = population(match), color = match[4] ?? 0, g = match[3] ?? 18.5;
-    setEnabled(v => ({ ...v, [pop]: true })); setMagMin(Math.min(magMin, g)); setMagMax(Math.max(magMax, g)); setColorMin(Math.min(colorMin, color)); setColorMax(Math.max(colorMax, color)); setSpectralFilter('ALL'); setObjectTypeFilter('ALL'); updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setShowSuggestions(false); focusNearbySearchResult(match[1], match[2]);
+    const previousIndex = selectedRef.current, pop = population(match), color = match[4] ?? 0, g = match[3] ?? 18.5;
+    setEnabled(v => ({ ...v, [pop]: true })); setMagMin(Math.min(magMin, g)); setMagMax(Math.max(magMax, g)); setColorMin(Math.min(colorMin, color)); setColorMax(Math.max(colorMax, color)); setSpectralFilter('ALL'); setObjectTypeFilter('ALL'); updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setShowSuggestions(false); focusNearbySearchResult(index, previousIndex);
   }
   function selectTableStar(index: number) { const match = catalog?.stars[index]; if (!match) return; updateSelection(index); coordinateFocus.current = { ra: match[1], dec: match[2] }; setNotice(''); setTableOpen(false); requestAnimationFrame(() => focusRegion(match[1], match[2], 28)); }
   function focusCluster(suggestion: Extract<SearchSuggestion, { kind: 'cluster' }>) {
